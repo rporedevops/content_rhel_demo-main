@@ -1,122 +1,147 @@
-# Configuring Katello using Ansible Automation to Synchronize and Serve RHEL Repositories #
+# Foreman Ansible Modules ![Build Status](https://github.com/theforeman/foreman-ansible-modules/workflows/CI/badge.svg)
 
-## What is this demo about? ##
+Ansible modules for interacting with the Foreman API and various plugin APIs such as Katello.
 
-The [content_rhel role](https://github.com/theforeman/foreman-ansible-modules/tree/develop/roles/content_rhel) is a soon to be released role in the [foreman collection](https://galaxy.ansible.com/theforeman/foreman) on Ansible Galaxy. This role configures [Katello](https://theforeman.org/plugins/katello/), one of several upstream components behind [Red Hat Satellite](https://www.redhat.com/en/technologies/management/satellite), to synchronize [RHEL](https://www.redhat.com/en/technologies/linux-platforms/enterprise-linux) repositories and serve them to registered clients. The full steps include uploading a subscription manifest, enabling and optionally syncing RHEL7 and RHEL8 repositories, creating a sync plan to schedule future syncs automatically, and creating an activation key to use when registering RHEL clients.
+## Documentation
 
-For more details, See the [live recording](https://youtu.be/k0spcDCIYYU?t=176) from the Foreman Community Demo #93 series. The content_rhel demo starts around 2:56 and lasts around ten minutes.
+A list of all modules and their documentation can be found at [theforeman.org/plugins/foreman-ansible-modules](https://theforeman.org/plugins/foreman-ansible-modules/).
 
-## What do I need to run the demo? ##
+## Support
 
-1. A Red Hat Login with the ability to create a [Subscription Allocation](https://access.redhat.com/management/subscription_allocations). Create a Subscription Allocation for the demo and assign at least one subscription providing RHEL repositories to it. Download the Subscription Manifest (manifest.zip file) and copy it to the location where you will run the demo.
+### Supported Foreman and plugins versions
 
-N.B. The `content_rhel` role configures Katello to provide RHEL content, and therefore requires a Red Hat Subscription Manifest providing RHEL content. We would like to expand the collection with roles providing other operating systems as well. Such a role might drop the manifest import step, add custom_credentials if any are needed for the OS, and use custom repositories instead of Red Hat repository sets.
+Modules should support any currently stable Foreman release and the matching set of plugins.
+Some modules have additional features/arguments that are only applied when the corresponding plugin is installed.
 
-[Pull Requests](https://github.com/theforeman/foreman-ansible-modules/pulls) are welcomed and there is a currently in-progress [guide for role developers](https://github.com/theforeman/foreman-ansible-modules/pull/1186/files).
+We actively test the modules against the latest stable Foreman release and the matching set of plugins.
 
-2. A live Katello instance to configure. You can install one following the [install documentation](https://theforeman.org/plugins/katello/3.18/installation/index.html) or using [Forklift](https://github.com/theforeman/forklift). You will need to create[1] a new organization such as "Demo Organization" where the configuration from the `content_rhel` role will be isolated. Still, it's best to not use your production Satellite Server for this demo if you care at all about the load it will create from syncing repositories! :)
+### Supported Ansible Versions
 
-[1] Via WebUI: organizations menu (near top left) --> manage organizations --> new organization --> set the organization name and use all defaults for other values.
+The supported Ansible versions are aligned with currently maintained Ansible versions that support Collections (2.10+).
+You can find the list of maintained Ansible versions [here](https://docs.ansible.com/ansible/devel/reference_appendices/release_and_maintenance.html).
 
-3. As of this writing the `content_rhel` role is not yet included in a released version of the [foreman collection](https://galaxy.ansible.com/theforeman/foreman) on [Ansible Galaxy](https://galaxy.ansible.com/); therefore this demo includes all of the necessary steps to create a Python virtual environment where we will install the latest development branch of the collection in a way that is completely isolated from the rest of your system.
+### Supported Python Versions
 
-## How do I run the demo? ##
+The supported Python versions are aligned with the currently supported Python versions by maintained Ansible releases.
+You can find the list of maintained Ansible releases and their supported Python versions versions [here](https://docs.ansible.com/ansible/devel/reference_appendices/release_and_maintenance.html).
 
-1. Clone the demo project from GitHub to your machine:
+### Known issues
 
-```shell
-$ git clone https://github.com/wbclark/content_rhel_demo.git
-$ cd content_rhel_demo
-```
+* Some modules, e.g. `repository_sync` and `content_view_version`, trigger long running tasks on the server side. It might be beneficial to your playbook to wait for their completion in an asynchronous manner.
+  As Ansible has facilities to do so, the modules will wait unconditionally. See the [Ansible documentation](https://docs.ansible.com/ansible/latest/user_guide/playbooks_async.html) for putting tasks in the background.
+  Please make sure to set a high enough `async` value, as otherwise Ansible might abort the execution of the module while there is still a task running on the server, making status reporting fail.
 
-2. Create and Activate a Python Virtual Environment for the demo projects:
+* According to [Ansible documentation](https://docs.ansible.com/ansible/latest/user_guide/playbooks_loops.html), using loop over Ansible resources can leak sensitive data. This applies to all modules, but especially those which require more secrets than the API credentials (`auth_source_ldap`, `compute_resource`, `host`, `hostgroup`, `http_proxy`, `image`, `repository`, `scc_account`, `user`). You can prevent this by using `no_log: true` on the task.
+  
+  eg:
 
-```shell
-$ python3 -m venv env
-$ source env/bin/activate
-```
+   ```yaml
+   - name: Create compute resources
+     theforeman.foreman.compute_resource:
+       server_url: https://foreman.example.com
+       username: admin
+       password: changeme
+       validate_certs: true
+       name: "{{ item.name }}"
+       organizations: "{{ item.organizations | default(omit) }}"
+       locations: "{{ item.locations | default(omit) }}"
+       description: "{{ item.description | default(omit) }}"
+       provider: "{{ item.provider }}"
+       provider_params: "{{ item.provider_params | default(omit) }}"
+       state: "{{ item.state | default('present') }}"
+     loop: "{{ compute_resources }}"
+     no_log: true
+   ```
+* Modules require write access to `~/.cache` (or wherever `$XDG_CACHE_HOME` points at). Otherwise the API documentation cannot be downloaded and you get errors like `[Errno 13] Permission denied: '/home/runner/.cache/apypie`. If on your system `~/.cache` is not writeable, please set the `$XDG_CACHE_HOME` environment variable to a directory Ansible can write to.
 
-2.a. You can confirm that you are using the virtual environment's Python from this point, by checking:
+## Installation
 
-```shell
-$ which python
-$ python --version
-```
+There are currently two ways to use the modules in your setup: install directly from Ansible Galaxy or via packages.
 
-3. Install Ansible and apypie (library for communicating with Katello API) to the virtual environment:
+### Installation from Ansible Galaxy
 
-```shell
-$ pip install ansible apypie
-```
+You can install the collection from [Ansible Galaxy](https://galaxy.ansible.com/theforeman/foreman) by running `ansible-galaxy collection install theforeman.foreman`.
 
-3.a. You can confirm that you are using the virtual environment's Ansible from this point, by checking:
+After the installation, the modules are available as `theforeman.foreman.<module_name>`. Please see the [Using Ansible collections documentation](https://docs.ansible.com/ansible/devel/user_guide/collections_using.html) for further details.
 
-```shell
-$ which ansible
-$ ansible --version
-```
+### Installation via packages
 
-4. Install the development branch of the Foreman collection to the virtual environment's Ansible:
+The collection is also available as `ansible-collection-theforeman-foreman` from the `plugins` repository on `yum.theforeman.org` for Enterprise Linux systems and from the `plugins` repository on `deb.theforeman.org` for Debian and Ubuntu systems.
 
-```shell
+After installing the package, you can use the modules in the same way as when they are installed directly from Ansible Galaxy.
+
+## Installation From Source
+
+For development or testing purposes, you can install the collection from source git repository. For production usage, see the instructions above on installing the latest stable release.
+
+### Installation from Github Repository
+
+With Ansible >= 2.10, you can install from a Github repository (such as this one or your fork):
+
+```console
 $ ansible-galaxy collection install git+https://github.com/theforeman/foreman-ansible-modules.git
 ```
 
-5. Copy the server variables template and edit your server variables file to point to your live Katello instance:
+If you have configured GitHub to use SSH instead of HTTPS, you can do:
 
-```shell
-$ cp vars/server.yml{.example,}
-$ vim vars/server.yml
+```console
+$ ansible-galaxy collection install git@github.com/theforeman/foreman-ansible-modules.git
 ```
 
-6. Inspect the demo playbook. You'll need to update the subscription manifest path to the location where it was downloaded on your machine. Optionally, edit other role variables to set desired behavior.
+You can also specify a branch to use such as `devel` (below) or a feature branch that you are working with:
 
-```shell
-$ vim content_rhel_demo.yml
+```console
+$ ansible-galaxy collection install git+https://github.com/theforeman/foreman-ansible-modules.git,devel
 ```
 
-For the complete list of supported role variables, refer to the `content_rhel` role [README.md](https://github.com/theforeman/foreman-ansible-modules/blob/develop/roles/content_rhel/README.md)
+To install from a `requirements.yml` file (useful when installing multiple collections) add a snippet to your `requirements.yml` like
 
-7. If you so desire, open the Katello WebUI to the Monitor --> Tasks page to directly observe progress, or directly observe system logs via a terminal session.
-
-```shell
-$ foreman-tail                             # tail all logs, including candlepin and pulp logs
-$ tail -f /var/log/foreman/production.log  # quieter alternative, production.log only
+```yaml
+---
+collections:
+  - name: https://github.com/theforeman/foreman-ansible-modules.git
+    type: git
+    version: devel
 ```
 
-8. Run the demo playbook.
+And install all specified requirements with `ansible-galaxy install -r requirements.yml`
 
-```shell
-$ ansible-playbook content_rhel_demo.yml
+### Building and Installing the Collection Locally
+
+For all currently supported versions of Ansible, you can build the collection locally:
+
+```console
+$ make dist
 ```
 
-9. When the playbook is complete, find the applied confiugrations on the Katello WebUI. With the Organization context set to "Demo Organization". Some hints: check Content --> Sync Status to see whether repositories synced or are syncing; check Content --> Subscriptions to see the uploaded subscription manifest; check Content --> Sync Plans to check the sync plan that the role created; check Content --> Activation Keys to see the activation key that the role created; check Monitor --> Tasks to see status of any tasks that ran or are running as part of the role.
+And install it with:
 
-## How do I clean up when finished? ##
-
-1. When you are finished with the demo, it's time to clean up. First delete the "Demo Organization" on Katello if you will no longer use it (you can delete the organization from the same Manage Organizations page on the Katello WebUI where you created it). Once the organization is deleted and the subscription manifest is freed up, delete the corresponding Subscription Allocation by logging into the Red Hat Customer Portal, navigating to Subscription Allocations, and deleting the Subscription Allocation to release its subscriptions back to the available pool.
-
-2. Finally deactivate the Python virtual environment and confirm that you are once again using your system's Python and Ansible:
-
-```shell
-$ deactivate
-$ which python
-$ python --version
-$ which ansible
-$ ansible --version
+```console
+$ ansible-galaxy collection install ./theforeman-foreman-*.tar.gz
 ```
 
-## Where can I contribute, discuss, provide feedback, or find more information? ##
+## Dependencies
 
-Happy Automating and thanks for checking out the demo! Please let us know what you think.
+These dependencies are required for the Ansible controller, not the Foreman server.
 
-Please direct issues related to this demo to the issues tab on [this repository](https://github.com/wbclark/content_rhel_demo).
+* [`PyYAML`](https://pypi.org/project/PyYAML/)
+* [`requests`](https://pypi.org/project/requests/)
+* `rpm` for the RPM support in the `content_upload` module
+* `debian` for the DEB support in the `content_upload` module
 
-For Foreman Ansible Collection feedback, including bug reports, feature requests, and pull requests, please visit the [FAM Repository](https://github.com/theforeman/foreman-ansible-modules) on GitHub.
+# Foreman Ansible Roles
 
-For other feedback and discussion, please use the [community forum](https://community.theforeman.org/).
+Roles using the Foreman Ansible Modules to configure Foreman and its plugins.
 
-Find other Foreman community events and demos on the [community calendar](https://community.theforeman.org/calendar).
+## Documentation
 
-For previous live demos and other recorded community events, visit the [Foreman Community Channel](https://www.youtube.com/channel/UCCo7AZ1oG6TbG0-dwjRqCmw) on YouTube.
-# content_rhel_demo-main
+For individual role documentation, check the README defined at `roles/rolename/README.md`.
+
+### Common Role Variables
+
+- `foreman_server_url`: URL of the Foreman server. If the variable is not specified, the value of environment variable `FOREMAN_SERVER_URL` will be used instead.
+- `foreman_username`: Username accessing the Foreman server. If the variable is not specified, the value of environment variable `FOREMAN_USERNAME` will be used instead.
+- `foreman_password`: Password of the user accessing the Foreman server. If the variable is not specified, the value of environment variable `FOREMAN_PASSWORD` will be used instead.
+- `foreman_validate_certs`: Whether or not to verify the TLS certificates of the Foreman server. If the variable is not specified, the value of environment variable `FOREMAN_VALIDATE_CERTS` will be used instead.
+- `foreman_organization`: Organization where configuration will be applied.
+# content_rhel_demo
